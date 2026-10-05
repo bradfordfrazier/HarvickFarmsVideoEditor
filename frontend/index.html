@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Harvick Farms Video Editor &amp; Studio</title>
+  <meta name="description" content="Automated video clipping, silence removal, reframing, and branding pipeline for Harvick Farms.">
+  <link rel="icon" type="image/svg+xml" href="/assets/harvick_farms_logo.svg">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    body, * {
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulseGradient {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Sticky Header -->
+  <header>
+    <div class="brand-wrapper">
+      <img src="/assets/harvick_farms_logo.svg" alt="Harvick Farms Logo" class="brand-logo-img" id="headerLogo" />
+      <div>
+        <h1 class="brand-title">HARVICK <span class="accent">FARMS</span> VIDEO STUDIO</h1>
+        <p class="tagline">Automated Trimming • Smart Reframing • Farm Branding</p>
+      </div>
+    </div>
+
+    <div class="header-status">
+      <div class="status-badge" id="hwBadge">
+        <span class="status-dot" id="hwDot"></span>
+        <span id="systemStatus">Detecting Hardware...</span>
+      </div>
+      <button id="btnOpenOutputsHeader" class="btn-secondary" title="Open Outputs Folder on Disk">
+        <span>📁</span> Exports Folder
+      </button>
+      <button id="btnOpenUploadsHeader" class="btn-secondary" title="Open Uploads Folder on Disk">
+        <span>📂</span> Uploads Folder
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Studio Workspace -->
+  <main class="studio-container">
+    
+    <!-- Left Stage: Video Preview & Audio Timeline -->
+    <section class="studio-stage">
+      
+      <!-- Video Player Card -->
+      <div class="preview-card">
+        <div class="player-wrapper ratio-9-16" id="playerWrapper">
+          <video id="previewVideo" controls playsinline preload="metadata">
+            <p>Your browser does not support HTML5 video preview.</p>
+          </video>
+          
+          <!-- Watermark Overlay Preview -->
+          <div class="watermark-overlay-preview top_right" id="watermarkOverlay">
+            <img src="/assets/harvick_farms_logo.png" alt="Harvick Farms Watermark" style="width: 100%; height: auto; display: block;" />
+          </div>
+
+          <!-- Lower-Third Overlay Preview -->
+          <div id="lowerThirdPreview" style="display: none; position: absolute; bottom: 30px; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; text-align: center; padding: 10px 16px; font-weight: 700; font-size: 0.95rem; border-top: 2px solid #fbc02d; pointer-events: none; z-index: 15;">
+            <span id="lowerThirdPreviewText"></span>
+          </div>
+        </div>
+
+        <!-- Player Controls Bar -->
+        <div class="player-controls-bar">
+          <div class="ratio-selector" id="ratioSelector">
+            <button class="ratio-btn active" data-ratio="9:16">9:16 Shorts</button>
+            <button class="ratio-btn" data-ratio="16:9">16:9 Landscape</button>
+            <button class="ratio-btn" data-ratio="1:1">1:1 Square</button>
+            <button class="ratio-btn" data-ratio="4:5">4:5 Feed</button>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <label class="toggle-switch" title="Auto-skip silence cuts during video playback" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="jumpCutPreviewToggle" checked />
+              <span class="slider-toggle"></span>
+            </label>
+            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">⚡ Live Jump-Cut Preview</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scanning / Processing Active Alert Banner -->
+      <div id="scanStatusBanner" style="display: none; background: #181f2e; border: 1px solid var(--accent-gold); border-radius: var(--radius-md); padding: 14px 18px; gap: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+        <div style="font-size: 1.8rem; animation: spin 1.5s linear infinite; line-height: 1;">⚙️</div>
+        <div style="flex: 1;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <strong id="scanStatusTitle" style="color: var(--accent-gold); font-size: 0.9rem;">Analyzing Audio &amp; Detecting Silences...</strong>
+            <span id="scanStatusTimer" style="font-size: 0.75rem; color: var(--text-muted);">Please wait</span>
+          </div>
+          <p id="scanStatusDesc" style="font-size: 0.75rem; color: var(--text-muted); margin: 0 0 8px 0;">
+            Running fast audio scan with FFmpeg to detect natural speech pauses.
+          </p>
+          <div style="height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden;">
+            <div id="scanPulseBar" style="height: 100%; width: 100%; background: linear-gradient(90deg, #2e7d32, #fbc02d, #2e7d32); background-size: 200% 100%; animation: pulseGradient 1.5s ease infinite;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cut Timeline Card -->
+      <div class="timeline-card">
+        <div class="timeline-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h3 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-gold);">
+              Audio Cut Timeline
+            </h3>
+            <span id="activeFileIndicator" style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;"></span>
+          </div>
+
+          <div class="stat-pills">
+            <div class="stat-pill">Orig: <strong id="statOrigDur">0:00</strong></div>
+            <div class="stat-pill">Cut: <strong id="statCutDur">0:00</strong></div>
+            <div class="stat-pill">Saved: <strong id="statSavedPct">0.0%</strong></div>
+            <div class="stat-pill">Cuts: <strong id="statCutsCount">0</strong></div>
+          </div>
+        </div>
+
+        <!-- Interactive Waveform & Speech Segments Canvas -->
+        <div class="timeline-canvas-container">
+          <canvas id="timelineCanvas"></canvas>
+          <div class="timeline-playhead" id="timelinePlayhead"></div>
+        </div>
+
+        <div class="timeline-legend">
+          <div class="legend-item">
+            <div class="legend-color speech"></div>
+            <span>Kept Speech Segment</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color silence"></div>
+            <span>Removed Silence (Jump-Cut)</span>
+          </div>
+          <div style="margin-left: auto; color: var(--text-dim);">
+            Click or drag timeline to seek
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Right Controls Panel -->
+    <aside class="studio-controls">
+      
+      <!-- Panel 1: Video Input -->
+      <div class="panel-card">
+        <h3><span>🎬</span> Source Video</h3>
+        
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/x-matroska,video/*" style="display: none;" />
+          <div class="dropzone-icon">📤</div>
+          <p>Drag &amp; drop video here, or <strong style="color: var(--accent-gold);">Browse Files</strong></p>
+          <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 4px;">Supports MP4, MOV, MKV, WebM</p>
+        </div>
+
+        <div class="or-divider">OR PASTE LOCAL FILE PATH</div>
+
+        <div class="path-input-group">
+          <input type="text" id="filePathInput" placeholder="C:\Users\...\raw_footage.mp4" />
+          <button id="btnScan" class="btn-primary">Scan</button>
+        </div>
+      </div>
+
+      <!-- Panel 2: Quick Presets -->
+      <div class="panel-card">
+        <h3><span>⚡</span> Quick Presets</h3>
+        <div class="preset-buttons" id="presetButtons">
+          <!-- Dynamically populated from /api/presets -->
+          <button class="preset-chip active" data-preset="youtube_shorts_reframe">YouTube Shorts (9:16)</button>
+          <button class="preset-chip" data-preset="longform_clean_cut">Long-form Vlog (16:9)</button>
+        </div>
+      </div>
+
+      <!-- Panel 3: Silence & Jump Cuts -->
+      <div class="panel-card">
+        <h3><span>✂️</span> Silence &amp; Jump Cuts</h3>
+        
+        <div class="control-row">
+          <div class="control-label">
+            <span>Silence Threshold</span>
+            <span class="control-sublabel">Noise floor cutoff level</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="noiseDbSlider" min="-50" max="-20" step="1" value="-35" />
+            <span class="slider-value" id="noiseDbVal">-35 dB</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Min Silence Duration</span>
+            <span class="control-sublabel">Minimum pause length to cut</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="minSilenceSlider" min="0.2" max="1.5" step="0.05" value="0.45" />
+            <span class="slider-value" id="minSilenceVal">0.45s</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Speech Padding Buffer</span>
+            <span class="control-sublabel">Natural head &amp; tail breathing room</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="paddingSlider" min="0.05" max="0.4" step="0.01" value="0.12" />
+            <span class="slider-value" id="paddingVal">0.12s</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Target Clip Scope</span>
+            <span class="control-sublabel">Duration cap for Shorts / Reels</span>
+          </div>
+          <select id="clipDurationSelect">
+            <option value="60">First 60s (YouTube Shorts)</option>
+            <option value="90">First 90s (Instagram Reel)</option>
+            <option value="180">First 3 Minutes</option>
+            <option value="all" selected>Full Video (All Jump-Cuts)</option>
+          </select>
+        </div>
+
+        <button id="btnRescan" class="btn-secondary" style="width: 100%; justify-content: center; margin-top: 4px;">
+          🔄 Recalculate Cuts
+        </button>
+      </div>
+
+      <!-- Panel 4: Harvick Branding & Framing -->
+      <div class="panel-card">
+        <h3><span>🌾</span> Branding &amp; Framing</h3>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Framing Mode</span>
+            <span class="control-sublabel">Landscape to vertical adaptation</span>
+          </div>
+          <select id="framingModeSelect">
+            <option value="blur_pillarbox" selected>Blurred Pillarbox (Recommended)</option>
+            <option value="crop">Center Zoom Crop</option>
+            <option value="fit">Fit / Letterbox</option>
+            <option value="passthrough">Passthrough Original</option>
+          </select>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Watermark Logo</span>
+            <span class="control-sublabel">Harvick Farms crest overlay</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="logoToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Logo Position</span>
+            <span class="control-sublabel">Corner alignment</span>
+          </div>
+          <select id="logoPosSelect">
+            <option value="top_right" selected>Top Right</option>
+            <option value="top_left">Top Left</option>
+            <option value="bottom_right">Bottom Right</option>
+            <option value="bottom_left">Bottom Left</option>
+            <option value="center">Center</option>
+          </select>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Logo Opacity</span>
+            <span class="control-sublabel">Transparency level</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="logoOpacitySlider" min="0.2" max="1.0" step="0.05" value="0.85" />
+            <span class="slider-value" id="logoOpacityVal">85%</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Lower-Third Banner</span>
+            <span class="control-sublabel">Text banner overlay</span>
+          </div>
+          <input type="text" id="lowerThirdInput" placeholder="e.g. Pasture Rotation Day 12" style="max-width: 200px;" />
+        </div>
+      </div>
+
+      <!-- Panel 5: Audio & Captions -->
+      <div class="panel-card">
+        <h3><span>🔊</span> Audio &amp; Captions</h3>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Audio Normalization</span>
+            <span class="control-sublabel">Broadcast standard (-14 LUFS)</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="audioNormToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Burn AI Subtitles</span>
+            <span class="control-sublabel">Fast OpenAI Whisper transcription</span>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="subtitlesToggle" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="control-row" id="subStyleRow" style="display: none;">
+          <div class="control-label">
+            <span>Subtitle Typography</span>
+            <span class="control-sublabel">Style preset</span>
+          </div>
+          <select id="subStyleSelect">
+            <option value="bold_yellow" selected>Bold Yellow (Punchy Shorts)</option>
+            <option value="clean_white">Clean White (Minimal)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Panel 6: Render & Export -->
+      <div class="panel-card">
+        <h3><span>🚀</span> Render &amp; Export</h3>
+
+        <button id="btnRender" class="btn-primary render-btn" disabled>
+          ⚡ Render Video
+        </button>
+
+        <div class="progress-box" id="progressBox" style="display: none;">
+          <div class="progress-meta">
+            <span id="progressStep">Initializing render...</span>
+            <strong id="progressPct">0%</strong>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBarFill"></div>
+          </div>
+          <div id="renderActions" style="display: none; margin-top: 10px; gap: 8px;">
+            <a id="btnDownload" class="btn-primary" style="flex: 1; text-align: center; text-decoration: none;" download>
+              ⬇️ Download MP4
+            </a>
+            <button id="btnRevealFolder" class="btn-secondary">
+              📂 Open Folder
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel 7: Recent Exports -->
+      <div class="panel-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+          <h3 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0;"><span>📁</span> Recent Exports</h3>
+          <button id="btnRefreshExports" class="icon-btn" title="Refresh exports list">🔄 Refresh</button>
+        </div>
+        <div class="export-list" id="exportList">
+          <div style="color: var(--text-dim); font-size: 0.8rem; text-align: center; padding: 12px;">
+            No exports yet. Render a video to see it here!
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- Load Timeline and Application Scripts -->
+  <script src="/static/js/timeline.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

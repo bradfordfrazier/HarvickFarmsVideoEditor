@@ -1,0 +1,47 @@
+# Python byte code & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.pytest_cache/
+
+# Media directories (ignore raw video files, preserve directories)
+uploads/*
+!uploads/.gitkeep
+output/*
+!output/.gitkeep
+
+# Video and audio binary media files
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wmv
+*.flv
+*.webm
+*.m4v
+*.wav
+*.mp3
+*.aac
+*.flac
+
+# Preserve branding assets in assets folder
+!assets/*.png
+!assets/*.svg
+
+# Temporary subtitle and script files
+*.ass
+*.srt
+*.temp.*
+*.txt
+!presets/*.json
+!requirements.txt
+
+# Environment & IDE
+.env
+.venv/
+venv/
+ENV/
+.vscode/
+.idea/
+*.log

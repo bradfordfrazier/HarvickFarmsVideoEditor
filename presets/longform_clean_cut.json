@@ -1,0 +1,17 @@
+{
+  "name": "Long-form Vlog (Landscape 16:9)",
+  "description": "Natural pause trimming, original 16:9 framing, subtle lower-third brand watermarking, and voice level mastering",
+  "silence_thresh_db": -38.0,
+  "min_silence_duration": 0.60,
+  "padding_duration": 0.20,
+  "target_aspect_ratio": "16:9",
+  "framing_mode": "passthrough",
+  "logo_overlay": true,
+  "logo_position": "top_right",
+  "logo_opacity": 0.70,
+  "logo_scale": 0.16,
+  "burn_subtitles": false,
+  "subtitle_style": "clean_white",
+  "normalize_audio": true,
+  "target_lufs": -14.0
+}
