@@ -39,6 +39,22 @@ const subtitlesToggle = document.getElementById("subtitlesToggle");
 const subStyleRow = document.getElementById("subStyleRow");
 const subStyleSelect = document.getElementById("subStyleSelect");
 
+// Retake Controls
+const retakeFilterToggle = document.getElementById("retakeFilterToggle");
+const retakeSimSlider = document.getElementById("retakeSimSlider");
+const retakeSimVal = document.getElementById("retakeSimVal");
+const btnDetectRetakes = document.getElementById("btnDetectRetakes");
+const retakesStatusBanner = document.getElementById("retakesStatusBanner");
+const retakesCountText = document.getElementById("retakesCountText");
+const btnToggleRetakesList = document.getElementById("btnToggleRetakesList");
+const retakesListContainer = document.getElementById("retakesListContainer");
+
+// Audio Cleanup & Drift Lock Controls
+const audioCleanupToggle = document.getElementById("audioCleanupToggle");
+const resyncDriftToggle = document.getElementById("resyncDriftToggle");
+const audioDelaySlider = document.getElementById("audioDelaySlider");
+const audioDelayVal = document.getElementById("audioDelayVal");
+
 // Scanning Status Banner Elements
 const scanStatusBanner = document.getElementById("scanStatusBanner");
 const scanStatusTitle = document.getElementById("scanStatusTitle");
@@ -387,6 +403,52 @@ function setupEventListeners() {
     subStyleRow.style.display = e.target.checked ? "flex" : "none";
   });
 
+  // Retake filter controls
+  if (retakeSimSlider) {
+    retakeSimSlider.addEventListener("input", (e) => {
+      retakeSimVal.textContent = `${Math.round(e.target.value * 100)}%`;
+    });
+  }
+
+  if (btnDetectRetakes) {
+    btnDetectRetakes.addEventListener("click", () => {
+      if (!currentFilePath) return alert("Please upload or scan a video first.");
+      runRetakeDetection();
+    });
+  }
+
+  if (btnToggleRetakesList) {
+    btnToggleRetakesList.addEventListener("click", () => {
+      const isHidden = retakesListContainer.style.display === "none";
+      retakesListContainer.style.display = isHidden ? "flex" : "none";
+      btnToggleRetakesList.textContent = isHidden ? "Details ▴" : "Details ▾";
+    });
+  }
+
+  if (retakeFilterToggle) {
+    retakeFilterToggle.addEventListener("change", () => {
+      if (!currentAnalysis) return;
+      if (retakeFilterToggle.checked) {
+        if (currentAnalysis.filtered_speech_segments) {
+          currentAnalysis.speech_segments = currentAnalysis.filtered_speech_segments;
+        }
+      } else {
+        if (currentAnalysis.raw_speech_segments) {
+          currentAnalysis.speech_segments = currentAnalysis.raw_speech_segments;
+        }
+      }
+      timeline.setData(currentAnalysis);
+      updateSegmentStats();
+    });
+  }
+
+  // Audio delay slider
+  if (audioDelaySlider) {
+    audioDelaySlider.addEventListener("input", (e) => {
+      audioDelayVal.textContent = `${e.target.value} ms`;
+    });
+  }
+
   if (clipDurationSelect) {
     clipDurationSelect.addEventListener("change", updateSegmentStats);
   }
@@ -527,6 +589,7 @@ async function scanVideo(filePath) {
 
     const data = await res.json();
     currentAnalysis = data;
+    currentAnalysis.raw_speech_segments = Array.from(data.speech_segments || []);
 
     const meta = data.metadata || {};
     activeFileIndicator.textContent = `${meta.filename || "Video"} (${meta.width}x${meta.height} @ ${meta.fps}fps)`;
@@ -536,6 +599,15 @@ async function scanVideo(filePath) {
 
     // Update Stats according to selected duration scope
     updateSegmentStats();
+
+    // Reset or display retakes UI banner
+    if (retakesStatusBanner) {
+      if (data.total_retakes_removed && data.total_retakes_removed > 0) {
+        renderRetakeGroups(data);
+      } else {
+        retakesStatusBanner.style.display = "none";
+      }
+    }
 
     btnRender.disabled = false;
   } catch (err) {
@@ -550,6 +622,112 @@ async function scanVideo(filePath) {
     if (scanStatusBanner) scanStatusBanner.style.display = "none";
     btnRescan.disabled = false;
   }
+}
+
+// 9b. Repeated Takes Detection Runner
+async function runRetakeDetection() {
+  if (!currentFilePath || !currentAnalysis) return;
+
+  btnDetectRetakes.disabled = true;
+  btnDetectRetakes.innerHTML = `<span>⏳</span> Transcribing &amp; Detecting Retakes...`;
+
+  if (scanStatusBanner) {
+    scanStatusBanner.style.display = "flex";
+    scanStatusTitle.textContent = "Analyzing Repeated Takes (Whisper AI)...";
+    scanStatusDesc.textContent = "Transcribing spoken sentences with Whisper and clustering repeated takes...";
+    const startTime = Date.now();
+    if (scanTimerInterval) clearInterval(scanTimerInterval);
+    scanTimerInterval = setInterval(() => {
+      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      scanStatusTimer.textContent = `Elapsed: ${elapsedSec}s`;
+    }, 200);
+  }
+
+  try {
+    const payload = {
+      file_path: currentFilePath,
+      similarity_threshold: parseFloat(retakeSimSlider.value),
+      max_gap_seconds: 75.0,
+      speech_segments: currentAnalysis.raw_speech_segments || currentAnalysis.speech_segments
+    };
+
+    const res = await fetch("/api/detect-retakes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Retake detection failed");
+    }
+
+    const data = await res.json();
+    currentAnalysis.retake_groups = data.groups;
+    currentAnalysis.discarded_retakes = data.discarded_intervals;
+    currentAnalysis.filtered_speech_segments = data.filtered_speech_segments;
+
+    if (retakeFilterToggle.checked) {
+      currentAnalysis.speech_segments = data.filtered_speech_segments;
+    }
+
+    renderRetakeGroups(data);
+
+    // Update timeline and statistics
+    timeline.setData(currentAnalysis);
+    updateSegmentStats();
+  } catch (err) {
+    alert("Retake Detection Error: " + err.message);
+  } finally {
+    if (scanTimerInterval) clearInterval(scanTimerInterval);
+    if (scanStatusBanner) scanStatusBanner.style.display = "none";
+    btnDetectRetakes.disabled = false;
+    btnDetectRetakes.innerHTML = `<span>⚡</span> Detect &amp; Filter Repeated Takes`;
+  }
+}
+
+function renderRetakeGroups(data) {
+  const groups = data.groups || [];
+  const totalDiscarded = data.total_retakes_removed || 0;
+
+  retakesStatusBanner.style.display = "block";
+  retakesCountText.textContent = `${totalDiscarded} repeated take${totalDiscarded === 1 ? "" : "s"} filtered out!`;
+
+  if (groups.length === 0) {
+    retakesListContainer.innerHTML = `<div style="color: var(--text-dim); font-size: 0.75rem; padding: 6px;">No repeated sentence takes detected. The delivery is clean!</div>`;
+    return;
+  }
+
+  retakesListContainer.innerHTML = "";
+  groups.forEach((g, gIdx) => {
+    const groupCard = document.createElement("div");
+    groupCard.style.cssText = "background: rgba(0,0,0,0.35); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px; font-size: 0.75rem;";
+    
+    let candidatesHtml = "";
+    g.candidates.forEach((c) => {
+      const isWinner = c.is_winner;
+      const badgeText = isWinner ? (g.winner_reason === "superior_quality" ? "WINNER (Cleanest Take)" : "WINNER (Last Take)") : "DISCARDED";
+      candidatesHtml += `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-top: 4px; padding: 4px 6px; background: ${isWinner ? 'rgba(46,125,50,0.15)' : 'rgba(239,68,68,0.08)'}; border-radius: 4px;">
+          <div style="flex: 1; margin-right: 8px;">
+            <div style="font-weight: 600; color: ${isWinner ? '#81c784' : '#f59e0b'};">
+              [${formatDuration(c.start)} - ${formatDuration(c.end)}] • ${badgeText}
+            </div>
+            <div style="color: var(--text-muted); font-size: 0.72rem; margin-top: 2px;">
+              "${c.text}"
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    groupCard.innerHTML = `
+      <div style="font-weight: 700; color: var(--accent-gold); font-size: 0.8rem; margin-bottom: 4px;">
+        Repeated Sequence #${gIdx + 1}
+      </div>
+      ${candidatesHtml}
+    `;
+    retakesListContainer.appendChild(groupCard);
+  });
 }
 
 // 10. Start Render & Export Pipeline
@@ -579,7 +757,11 @@ async function startRender() {
     burn_subtitles: subtitlesToggle.checked,
     subtitle_style: subStyleSelect.value,
     normalize_audio: audioNormToggle.checked,
-    target_lufs: -14.0
+    target_lufs: -14.0,
+    cleanup_audio: audioCleanupToggle ? audioCleanupToggle.checked : true,
+    resync_drift: resyncDriftToggle ? resyncDriftToggle.checked : true,
+    audio_delay_ms: audioDelaySlider ? parseFloat(audioDelaySlider.value) : 0.0,
+    fps: (currentAnalysis && currentAnalysis.metadata && currentAnalysis.metadata.fps) ? currentAnalysis.metadata.fps : 60.0
   };
 
   btnRender.disabled = true;

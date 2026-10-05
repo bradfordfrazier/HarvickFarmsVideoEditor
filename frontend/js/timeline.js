@@ -18,6 +18,7 @@ class VideoTimeline {
     this.duration = data.metadata ? data.metadata.duration : 0.0;
     this.speechSegments = data.speech_segments || [];
     this.silenceIntervals = data.silence_intervals || [];
+    this.discardedRetakes = data.discarded_retakes || [];
     this.waveform = data.waveform || [];
     this.resize();
     this.render();
@@ -115,7 +116,23 @@ class VideoTimeline {
       ctx.fillRect(startX, 0, segWidth, 3);
     }
 
-    // 2. Draw Kept Speech segments (Green tint & border)
+    // 2. Draw Discarded Repeated Takes (Amber tint & border)
+    if (this.discardedRetakes && this.discardedRetakes.length > 0) {
+      for (const retake of this.discardedRetakes) {
+        const startX = (retake.start / this.duration) * w;
+        const endX = (retake.end / this.duration) * w;
+        const segWidth = Math.max(2, endX - startX);
+
+        ctx.fillStyle = "rgba(245, 158, 11, 0.35)";
+        ctx.fillRect(startX, 0, segWidth, h);
+
+        // Top amber accent line
+        ctx.fillStyle = "#f59e0b";
+        ctx.fillRect(startX, 0, segWidth, 3);
+      }
+    }
+
+    // 3. Draw Kept Speech segments (Green tint & border)
     for (const seg of this.speechSegments) {
       const startX = (seg.start / this.duration) * w;
       const endX = (seg.end / this.duration) * w;

@@ -144,6 +144,10 @@
             <div class="legend-color silence"></div>
             <span>Removed Silence (Jump-Cut)</span>
           </div>
+          <div class="legend-item">
+            <div class="legend-color retake" style="background: #f59e0b;"></div>
+            <span>Repeated Take (Cut)</span>
+          </div>
           <div style="margin-left: auto; color: var(--text-dim);">
             Click or drag timeline to seek
           </div>
@@ -239,6 +243,46 @@
         </button>
       </div>
 
+      <!-- Panel 3B: Smart Repeated Takes (Whisper AI) -->
+      <div class="panel-card" style="border: 1px solid rgba(245, 158, 11, 0.4); background: linear-gradient(180deg, rgba(245, 158, 11, 0.05) 0%, var(--bg-secondary) 100%);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0; color: #f59e0b;">
+            <span>🔄</span> Repeated Takes Filter
+          </h3>
+          <label class="toggle-switch" title="Enable Smart Repeated Take Filter">
+            <input type="checkbox" id="retakeFilterToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <p style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;">
+          Scans spoken sentences for false starts, stumbles, and repeated takes. Narrows to the best version, <strong>defaulting to the last take</strong> when candidates are similar.
+        </p>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Similarity Sensitivity</span>
+            <span class="control-sublabel">Phrase restart threshold</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="retakeSimSlider" min="0.40" max="0.80" step="0.05" value="0.55" />
+            <span class="slider-value" id="retakeSimVal">55%</span>
+          </div>
+        </div>
+
+        <button id="btnDetectRetakes" class="btn-secondary" style="width: 100%; justify-content: center; gap: 8px;">
+          <span>⚡</span> Detect &amp; Filter Repeated Takes
+        </button>
+
+        <div id="retakesStatusBanner" style="display: none; padding: 12px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-sm); font-size: 0.8rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong id="retakesCountText" style="color: #f59e0b;">0 repeated takes removed</strong>
+            <button id="btnToggleRetakesList" class="icon-btn" style="font-size: 0.7rem; padding: 2px 6px;">Details ▾</button>
+          </div>
+          <div id="retakesListContainer" style="display: none; margin-top: 10px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;"></div>
+        </div>
+      </div>
+
       <!-- Panel 4: Harvick Branding & Framing -->
       <div class="panel-card">
         <h3><span>🌾</span> Branding &amp; Framing</h3>
@@ -314,6 +358,39 @@
             <input type="checkbox" id="audioNormToggle" checked />
             <span class="slider-toggle"></span>
           </label>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Audio Cleanup &amp; Denoise</span>
+            <span class="control-sublabel">Removes wind rumble, hum, hiss &amp; sibilance</span>
+          </div>
+          <label class="toggle-switch" title="Remove sub-bass rumble (<80Hz), room hum, hiss (>11kHz) and de-ess sibilance">
+            <input type="checkbox" id="audioCleanupToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>A/V Drift Lock (VFR Resync)</span>
+            <span class="control-sublabel">Fixes drift on phone variable frame rate</span>
+          </div>
+          <label class="toggle-switch" title="Continuously resamples audio and locks PTS to video timeline to prevent lip-sync drift">
+            <input type="checkbox" id="resyncDriftToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>Audio Sync Offset</span>
+            <span class="control-sublabel">Manual lip-sync offset adjustment</span>
+          </div>
+          <div class="slider-wrapper">
+            <input type="range" id="audioDelaySlider" min="-300" max="300" step="10" value="0" />
+            <span class="slider-value" id="audioDelayVal">0 ms</span>
+          </div>
         </div>
 
         <div class="control-row">

@@ -219,9 +219,11 @@ def analyze_video(
     file_path: str,
     noise_db: float = -35.0,
     min_silence_duration: float = 0.45,
-    padding: float = 0.12
+    padding: float = 0.12,
+    detect_retakes: bool = False,
+    similarity_threshold: float = 0.55
 ) -> Dict[str, Any]:
-    """Comprehensive video scan: metadata, silence intervals, speech segments, waveform."""
+    """Comprehensive video scan: metadata, silence intervals, speech segments, waveform, and optional retake detection."""
     meta = get_media_metadata(file_path)
     total_dur = meta.get("duration", 0.0)
 
@@ -234,11 +236,35 @@ def analyze_video(
             "total_silence_duration": 0.0,
             "time_saved_seconds": 0.0,
             "time_saved_percent": 0.0,
-            "waveform": [0.0] * 200
+            "waveform": [0.0] * 200,
+            "retake_groups": [],
+            "discarded_retakes": [],
+            "total_retakes_removed": 0
         }
 
     silence_intervals = detect_silence_intervals(file_path, noise_db, min_silence_duration)
     speech_segments = compute_speech_segments(total_dur, silence_intervals, padding)
+
+    retake_groups = []
+    discarded_retakes = []
+    total_retakes_removed = 0
+    raw_speech_segments = list(speech_segments)
+
+    if detect_retakes:
+        try:
+            from backend.core.take_detector import (
+                transcribe_audio_whisper,
+                detect_repeated_takes,
+                filter_speech_segments_by_retakes
+            )
+            transcribed = transcribe_audio_whisper(file_path)
+            retake_res = detect_repeated_takes(transcribed, similarity_threshold=similarity_threshold)
+            retake_groups = retake_res["groups"]
+            discarded_retakes = retake_res["discarded_intervals"]
+            total_retakes_removed = retake_res["total_retakes_removed"]
+            speech_segments = filter_speech_segments_by_retakes(speech_segments, discarded_retakes)
+        except Exception as e:
+            print(f"Warning: Retake detection failed: {e}")
 
     total_speech_dur = sum(seg["duration"] for seg in speech_segments)
     total_silence_dur = max(0.0, total_dur - total_speech_dur)
@@ -250,9 +276,13 @@ def analyze_video(
         "metadata": meta,
         "silence_intervals": silence_intervals,
         "speech_segments": speech_segments,
+        "raw_speech_segments": raw_speech_segments,
         "total_speech_duration": round(total_speech_dur, 2),
         "total_silence_duration": round(total_silence_dur, 2),
         "time_saved_seconds": round(total_silence_dur, 2),
         "time_saved_percent": round(time_saved_pct, 1),
-        "waveform": waveform
+        "waveform": waveform,
+        "retake_groups": retake_groups,
+        "discarded_retakes": discarded_retakes,
+        "total_retakes_removed": total_retakes_removed
     }

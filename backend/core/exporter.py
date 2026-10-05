@@ -40,6 +40,10 @@ def run_export_pipeline(
     subtitle_style: str = "bold_yellow",
     normalize_audio: bool = True,
     target_lufs: float = -14.0,
+    cleanup_audio: bool = True,
+    resync_drift: bool = True,
+    audio_delay_ms: float = 0.0,
+    fps: float = 60.0,
     output_filename: Optional[str] = None
 ):
     """Execute complete export pipeline with progress tracking."""
@@ -81,13 +85,17 @@ def run_export_pipeline(
                 concat_lines.append(f"inpoint {s['start']}")
                 concat_lines.append(f"outpoint {s['end']}")
             ffconcat_path.write_text("\n".join(concat_lines), encoding="utf-8")
-            inputs = ["-safe", "0", "-f", "concat", "-i", str(ffconcat_path)]
+            inputs = ["-fflags", "+genpts+igndts", "-safe", "0", "-f", "concat", "-i", str(ffconcat_path)]
         else:
-            inputs = ["-i", source_file]
+            inputs = ["-fflags", "+genpts+igndts", "-i", source_file]
 
         curr_v = "0:v"
         curr_a = "0:a"
         filter_parts: List[str] = []
+
+        # 1. Enforce Constant Frame Rate (CFR) to prevent VFR sync drift
+        filter_parts.append(f"[{curr_v}]fps=fps={fps},format=yuv420p[v_cfr]")
+        curr_v = "v_cfr"
 
         # 2. Reframing
         reframe_str = build_reframe_filter(curr_v, "v_reframed", target_aspect=target_aspect, framing_mode=framing_mode)
@@ -118,8 +126,16 @@ def run_export_pipeline(
             filter_parts.append(f"[{curr_v}]ass='{escaped_ass}'[v_subbed]")
             curr_v = "v_subbed"
 
-        # 5. Audio mastering
-        audio_filter = build_audio_filter(curr_a, "a_mastered", normalize=normalize_audio, target_lufs=target_lufs)
+        # 5. Audio mastering with artifact cleanup and A/V drift-locking resampler
+        audio_filter = build_audio_filter(
+            curr_a,
+            "a_mastered",
+            normalize=normalize_audio,
+            target_lufs=target_lufs,
+            cleanup_artifacts=cleanup_audio,
+            resync_drift=resync_drift,
+            audio_delay_ms=audio_delay_ms
+        )
         filter_parts.append(audio_filter)
         curr_a = "a_mastered"
 
@@ -135,6 +151,7 @@ def run_export_pipeline(
             "-filter_complex", ";".join(filter_parts),
             "-map", f"[{curr_v}]",
             "-map", f"[{curr_a}]",
+            "-fps_mode", "cfr",
             *vcodec,
             "-c:a", "aac",
             "-b:a", "192k",

@@ -22,6 +22,14 @@ class ScanRequest(BaseModel):
     noise_db: float = -35.0
     min_silence_duration: float = 0.45
     padding_duration: float = 0.12
+    detect_retakes: bool = False
+    similarity_threshold: float = 0.55
+
+class RetakeRequest(BaseModel):
+    file_path: str
+    similarity_threshold: float = 0.55
+    max_gap_seconds: float = 75.0
+    speech_segments: Optional[List[Dict[str, Any]]] = None
 
 class RenderSegment(BaseModel):
     start: float
@@ -43,6 +51,10 @@ class RenderRequest(BaseModel):
     subtitle_style: str = "bold_yellow"
     normalize_audio: bool = True
     target_lufs: float = -14.0
+    cleanup_audio: bool = True
+    resync_drift: bool = True
+    audio_delay_ms: float = 0.0
+    fps: float = 60.0
     output_filename: Optional[str] = None
 
 @router.get("/health")
@@ -64,9 +76,40 @@ def scan_media(req: ScanRequest):
         file_path=str(p),
         noise_db=req.noise_db,
         min_silence_duration=req.min_silence_duration,
-        padding=req.padding_duration
+        padding=req.padding_duration,
+        detect_retakes=req.detect_retakes,
+        similarity_threshold=req.similarity_threshold
     )
     return analysis
+
+@router.post("/detect-retakes")
+def detect_retakes_endpoint(req: RetakeRequest):
+    p = Path(req.file_path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+
+    from backend.core.take_detector import (
+        transcribe_audio_whisper,
+        detect_repeated_takes,
+        filter_speech_segments_by_retakes
+    )
+    transcribed = transcribe_audio_whisper(str(p))
+    retake_res = detect_repeated_takes(
+        transcribed,
+        similarity_threshold=req.similarity_threshold,
+        max_gap_seconds=req.max_gap_seconds
+    )
+    filtered = []
+    if req.speech_segments:
+        filtered = filter_speech_segments_by_retakes(req.speech_segments, retake_res["discarded_intervals"])
+
+    return {
+        "groups": retake_res["groups"],
+        "discarded_intervals": retake_res["discarded_intervals"],
+        "total_retakes_removed": retake_res["total_retakes_removed"],
+        "transcribed_segments": transcribed,
+        "filtered_speech_segments": filtered
+    }
 
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
@@ -128,6 +171,10 @@ def trigger_render(req: RenderRequest):
         subtitle_style=req.subtitle_style,
         normalize_audio=req.normalize_audio,
         target_lufs=req.target_lufs,
+        cleanup_audio=req.cleanup_audio,
+        resync_drift=req.resync_drift,
+        audio_delay_ms=req.audio_delay_ms,
+        fps=req.fps,
         output_filename=req.output_filename
     )
 

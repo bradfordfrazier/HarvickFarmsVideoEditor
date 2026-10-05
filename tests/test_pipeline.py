@@ -63,10 +63,27 @@ def test_branding_filter_builder():
     assert Path(extra_asset).exists()
 
 def test_audio_mastering_builder():
-    norm_filter = build_audio_filter("0:a", "a_mastered", normalize=True, target_lufs=-14.0)
-    assert "loudnorm=I=-14.0" in norm_filter
+    full_filter = build_audio_filter(
+        "0:a", "a_mastered",
+        normalize=True,
+        target_lufs=-14.0,
+        cleanup_artifacts=True,
+        resync_drift=True,
+        audio_delay_ms=100.0
+    )
+    assert "loudnorm=I=-14.0" in full_filter
+    assert "highpass=f=80" in full_filter
+    assert "afftdn=nf=-25" in full_filter
+    assert "aresample=async=1000" in full_filter
+    assert "adelay=delays=100:all=1" in full_filter
 
-    passthrough_filter = build_audio_filter("0:a", "a_mastered", normalize=False)
+    passthrough_filter = build_audio_filter(
+        "0:a", "a_mastered",
+        normalize=False,
+        cleanup_artifacts=False,
+        resync_drift=False,
+        audio_delay_ms=0.0
+    )
     assert "anull" in passthrough_filter
 
 def test_silence_detection_on_sample():
@@ -112,3 +129,21 @@ def test_export_pipeline_execution(tmp_path):
     output_file = OUTPUT_DIR / output_filename
     assert output_file.exists()
     assert output_file.stat().st_size > 0
+
+def test_detect_retakes_endpoint():
+    sample_file = UPLOADS_DIR / "test_sample.mp4"
+    if not sample_file.exists():
+        pytest.skip("Test sample not generated")
+
+    res = client.post("/api/detect-retakes", json={
+        "file_path": str(sample_file),
+        "similarity_threshold": 0.55,
+        "max_gap_seconds": 60.0,
+        "speech_segments": [{"start": 0.0, "end": 1.5, "duration": 1.5}]
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert "groups" in data
+    assert "discarded_intervals" in data
+    assert "total_retakes_removed" in data
+    assert "filtered_speech_segments" in data
