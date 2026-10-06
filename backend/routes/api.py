@@ -56,6 +56,7 @@ class RenderRequest(BaseModel):
     audio_delay_ms: float = 0.0
     fps: float = 60.0
     output_filename: Optional[str] = None
+    rough_cut: bool = False  # copy the video instead of re-encoding (fast, keyframe-accurate)
 
 @router.get("/health")
 def health_check():
@@ -175,7 +176,8 @@ def trigger_render(req: RenderRequest):
         resync_drift=req.resync_drift,
         audio_delay_ms=req.audio_delay_ms,
         fps=req.fps,
-        output_filename=req.output_filename
+        output_filename=req.output_filename,
+        rough_cut=req.rough_cut
     )
 
     return {"job_id": job_id, "status": "processing"}

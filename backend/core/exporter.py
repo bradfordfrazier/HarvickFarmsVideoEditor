@@ -188,7 +188,20 @@ def _audio_ranges(frame_ranges: List[Tuple[int, int]], rate: Fraction, lead_fram
 
 
 def _select_expr(ranges: List[Tuple[int, int]]) -> str:
-    return "+".join(f"between(n,{a},{b - 1})" for a, b in ranges)
+    """
+    Expression that is non-zero when frame/block number n falls in any range.
+
+    Built as a binary search tree of if() tests rather than one long
+    "between(...)+between(...)+..." sum. Newer FFmpeg builds (confirmed on 9.0.2) reject expressions
+    nested more than 100 levels deep, and a flat sum of N terms counts as N
+    levels. The tree is only ~log2(N) deep and is also much cheaper to
+    evaluate: about 10 comparisons per frame instead of one per segment.
+    """
+    if len(ranges) == 1:
+        a, b = ranges[0]
+        return f"between(n,{a},{b - 1})"
+    mid = len(ranges) // 2
+    return f"if(lt(n,{ranges[mid][0]}),{_select_expr(ranges[:mid])},{_select_expr(ranges[mid:])})"
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +227,8 @@ def _filter_args(graph: str, script_path: Path) -> List[str]:
     return ["-/filter_complex", str(script_path)]  # FFmpeg 7+ (and git builds)
 
 
-def _run_ffmpeg(cmd: List[str], job_id: str, total_duration: float) -> Tuple[int, str]:
+def _run_ffmpeg(cmd: List[str], job_id: str, total_duration: float,
+                base_pct: float = 35.0, span_pct: float = 64.0) -> Tuple[int, str]:
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, universal_newlines=True
@@ -230,7 +244,7 @@ def _run_ffmpeg(cmd: List[str], job_id: str, total_duration: float) -> Tuple[int
             if m:
                 if total_duration > 0:
                     out_sec = float(m.group(1)) / 1_000_000.0
-                    pct = min(99.0, 35.0 + (out_sec / total_duration) * 64.0)
+                    pct = min(99.0, base_pct + (out_sec / total_duration) * span_pct)
                     JOBS[job_id]["progress"] = round(pct, 1)
             elif "=" not in line or " " in line:
                 # keep real log lines, skip the key=value progress chatter
@@ -264,11 +278,19 @@ def run_export_pipeline(
     resync_drift: bool = True,   # accepted for API compatibility; no longer needed
     audio_delay_ms: float = 0.0,
     fps: float = 60.0,
-    output_filename: Optional[str] = None
+    output_filename: Optional[str] = None,
+    rough_cut: bool = False
 ):
-    """Execute complete export pipeline with progress tracking."""
+    """
+    Execute complete export pipeline with progress tracking.
+
+    rough_cut=True copies the original video instead of re-encoding it: minutes
+    instead of ~20, no quality loss, but cuts start on keyframes and there is
+    no reframing, logo, lower-third or subtitles. See backend/core/rough_cut.py.
+    """
     if not output_filename:
-        output_filename = f"harvick_cut_{uuid.uuid4().hex[:8]}.mp4"
+        prefix = "harvick_rough" if rough_cut else "harvick_cut"
+        output_filename = f"{prefix}_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
     filter_script = OUTPUT_DIR / f"{job_id}_filters.txt"
 
@@ -278,10 +300,25 @@ def run_export_pipeline(
         "step": "Initializing",
         "output_file": str(output_path),
         "output_filename": output_filename,
-        "error": None
+        "error": None,
+        "info": None
     }
 
     try:
+        if rough_cut and segments:
+            from backend.core.rough_cut import run_rough_cut
+            run_rough_cut(
+                JOBS[job_id], job_id, source_file, segments, output_path,
+                has_audio=_probe_source(source_file)["has_audio"],
+                run_ffmpeg=_run_ffmpeg, select_expr=_select_expr, filter_args=_filter_args,
+                normalize_audio=normalize_audio, target_lufs=target_lufs,
+                cleanup_audio=cleanup_audio, audio_delay_ms=audio_delay_ms
+            )
+            JOBS[job_id]["status"] = "completed"
+            JOBS[job_id]["progress"] = 100.0
+            JOBS[job_id]["step"] = "Completed"
+            return
+
         # Step 1: Subtitles (if requested). These are timed against the SOURCE.
         ass_path = None
         if burn_subtitles:

@@ -420,6 +420,17 @@
       <div class="panel-card">
         <h3><span>🚀</span> Render &amp; Export</h3>
 
+        <div class="control-row">
+          <div class="control-label">
+            <span>Rough Cut (Fast, No Re-encode)</span>
+            <span class="control-sublabel">Minutes instead of ~20. Original quality. Cuts start on keyframes; no reframing, logo, banner or subtitles.</span>
+          </div>
+          <label class="toggle-switch" title="Copies the original video instead of re-encoding it. Each kept segment starts on the nearest earlier keyframe, so a little of each pause may remain. Audio is still cut precisely and mastered.">
+            <input type="checkbox" id="roughCutToggle" />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
         <button id="btnRender" class="btn-primary render-btn" disabled>
           ⚡ Render Video
         </button>
@@ -432,6 +443,7 @@
           <div class="progress-bar-bg">
             <div class="progress-bar-fill" id="progressBarFill"></div>
           </div>
+          <div id="renderInfo" style="display: none; margin-top: 8px; font-size: 0.75rem; color: var(--text-dim); line-height: 1.4;"></div>
           <div id="renderActions" style="display: none; margin-top: 10px; gap: 8px;">
             <a id="btnDownload" class="btn-primary" style="flex: 1; text-align: center; text-decoration: none;" download>
               ⬇️ Download MP4

@@ -75,6 +75,8 @@ const activeFileIndicator = document.getElementById("activeFileIndicator");
 const btnScan = document.getElementById("btnScan");
 const btnRescan = document.getElementById("btnRescan");
 const btnRender = document.getElementById("btnRender");
+const roughCutToggle = document.getElementById("roughCutToggle");
+const renderInfo = document.getElementById("renderInfo");
 const filePathInput = document.getElementById("filePathInput");
 const fileInput = document.getElementById("fileInput");
 const dropzone = document.getElementById("dropzone");
@@ -304,7 +306,10 @@ function updateSegmentStats() {
   if (limitStr !== "all") {
     statSavedPct.textContent = `Capped to ${limitStr}s`;
   } else {
-    statSavedPct.textContent = `${currentAnalysis.time_saved_percent}% (-${currentAnalysis.time_saved_seconds}s)`;
+    // Computed from what will actually be exported, so removed retakes are counted too
+    const savedSec = Math.max(0, totalOrig - totalActiveDur);
+    const savedPct = totalOrig > 0 ? (savedSec / totalOrig) * 100 : 0;
+    statSavedPct.textContent = `${savedPct.toFixed(1)}% (-${savedSec.toFixed(1)}s)`;
   }
   statCutsCount.textContent = `${segCount} segments`;
 }
@@ -491,6 +496,11 @@ function setupEventListeners() {
 
   // Render button
   btnRender.addEventListener("click", startRender);
+  if (roughCutToggle) {
+    roughCutToggle.addEventListener("change", () => {
+      btnRender.textContent = roughCutToggle.checked ? "⚡ Rough Cut (Fast)" : "⚡ Render Video";
+    });
+  }
 
   // Folder open buttons
   btnOpenOutputsHeader.addEventListener("click", () => openFolder("output"));
@@ -647,7 +657,7 @@ async function runRetakeDetection() {
     const payload = {
       file_path: currentFilePath,
       similarity_threshold: parseFloat(retakeSimSlider.value),
-      max_gap_seconds: 75.0,
+      max_gap_seconds: 150.0,
       speech_segments: currentAnalysis.raw_speech_segments || currentAnalysis.speech_segments
     };
 
@@ -761,13 +771,16 @@ async function startRender() {
     cleanup_audio: audioCleanupToggle ? audioCleanupToggle.checked : true,
     resync_drift: resyncDriftToggle ? resyncDriftToggle.checked : true,
     audio_delay_ms: audioDelaySlider ? parseFloat(audioDelaySlider.value) : 0.0,
-    fps: (currentAnalysis && currentAnalysis.metadata && currentAnalysis.metadata.fps) ? currentAnalysis.metadata.fps : 60.0
+    fps: (currentAnalysis && currentAnalysis.metadata && currentAnalysis.metadata.fps) ? currentAnalysis.metadata.fps : 60.0,
+    rough_cut: roughCutToggle ? roughCutToggle.checked : false
   };
 
   btnRender.disabled = true;
   progressBox.style.display = "flex";
   renderActions.style.display = "none";
   progressBarFill.style.width = "0%";
+  progressBarFill.style.background = "";  // clear the red left by a previous failed render
+  if (renderInfo) { renderInfo.style.display = "none"; renderInfo.textContent = ""; }
   progressStep.textContent = "Starting render pipeline...";
   progressPct.textContent = "0%";
 
@@ -806,6 +819,10 @@ function pollJobStatus(jobId) {
       progressBarFill.style.width = `${pct}%`;
       progressPct.textContent = `${pct}%`;
       progressStep.textContent = job.step || "Processing...";
+      if (renderInfo && job.info) {
+        renderInfo.textContent = job.info;
+        renderInfo.style.display = "block";
+      }
 
       if (job.status === "completed") {
         clearInterval(jobPollTimer);
