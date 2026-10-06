@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from backend.config import ASSETS_DIR
@@ -92,10 +93,16 @@ def build_branding_filter(
     position: str = "top_right",
     opacity: float = 0.85,
     scale_ratio: float = 0.22,
-    lower_third_text: Optional[str] = None
+    lower_third_text: Optional[str] = None,
+    frame_size: Optional[Tuple[int, int]] = None
 ) -> Tuple[str, Optional[str]]:
     """
     Returns (filter_complex_string, extra_input_file_path_if_needed).
+
+    frame_size: (width, height) of the video being branded. When given, the
+    logo, margins and lower-third are sized relative to the frame's shorter
+    side, so branding looks the same at 1080p and 4K. Without it, sizes fall
+    back to fixed pixel values tuned for a 1080-pixel frame.
     """
     ensure_default_harvick_assets()
     
@@ -109,6 +116,15 @@ def build_branding_filter(
 
     coords = POSITION_COORDS.get(position, "W-w-40:40")
 
+    # Everything below was designed for a frame whose shorter side is 1080 px.
+    k = (min(frame_size) / 1080.0) if frame_size and min(frame_size) > 0 else 1.0
+    if k != 1.0:
+        coords = re.sub(r"(?<![\w.])(40|60)(?![\w.])", lambda m: str(int(round(int(m.group(1)) * k))), coords)
+    logo_max_w = max(2, int(round(scale_ratio * 1080 * k / 2)) * 2)
+
+    def px(v: float) -> int:
+        return int(round(v * k))
+
     filter_chains = []
     current_v = video_label
 
@@ -120,20 +136,20 @@ def build_branding_filter(
         logo_filter = (
             f"[logo_in]format=rgba,"
             f"colorchannelmixer=aa={opacity},"
-            f"scale=iw*min(1\\,({scale_ratio}*1080)/iw):-1[scaled_logo];"
-            f"[{current_v}][scaled_logo]overlay={coords}[v_branded]"
+            f"scale='min(iw,{logo_max_w})':-1:flags=lanczos[scaled_logo];"
+            f"[{current_v}][scaled_logo]overlay={coords}[v_logo]"
         )
         filter_chains.append(logo_filter)
-        current_v = "v_branded"
+        current_v = "v_logo"
 
     if lower_third_text:
         # Lower third banner
         # Text escaped for FFmpeg
         clean_text = lower_third_text.replace(":", "\\:").replace("'", "\\'")
         banner_filter = (
-            f"[{current_v}]drawbox=y=ih-180:color=black@0.65:width=iw:height=100:t=fill,"
-            f"drawtext=text='{clean_text}':fontcolor=white:fontsize=36:"
-            f"x=(w-text_w)/2:y=h-145:box=0[{output_label}]"
+            f"[{current_v}]drawbox=y=ih-{px(180)}:color=black@0.65:width=iw:height={px(100)}:t=fill,"
+            f"drawtext=text='{clean_text}':fontcolor=white:fontsize={px(36)}:"
+            f"x=(w-text_w)/2:y=h-{px(145)}:box=0[{output_label}]"
         )
         filter_chains.append(banner_filter)
     else:

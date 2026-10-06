@@ -28,7 +28,7 @@ class ScanRequest(BaseModel):
 class RetakeRequest(BaseModel):
     file_path: str
     similarity_threshold: float = 0.55
-    max_gap_seconds: float = 75.0
+    max_gap_seconds: float = 150.0  # longest single take before its retake starts
     speech_segments: Optional[List[Dict[str, Any]]] = None
 
 class RenderSegment(BaseModel):
