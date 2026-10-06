@@ -45,6 +45,10 @@ SHORT_TAKE_MIN_SCORE = 0.75
 SOFT_MIN_SCORE = 0.80
 MAX_ABANDONED_TAIL_WORDS = 10  # words a take may run on after the matched part
 MAX_TAKE_TOKENS = 600
+# "Reworded restart" rule (same key phrase, different lead-in) - see _phrase_restart
+PHRASE_MAX_TAKE_TOKENS = 45    # only single-sentence-sized takes qualify
+PHRASE_MAX_LEAD_TOKENS = 6     # the shared phrase must come early in both takes
+PHRASE_MAX_LOST_CONTENT = 8    # content words the earlier take may have that the retake lacks
 CUT_LEAD_SECONDS = 0.12        # breathing room kept before the winning take
 CUT_TRAIL_SECONDS = 0.15       # breathing room kept after the last kept word
 MIN_KEPT_PIECE_SECONDS = 0.25  # slivers shorter than this are dropped
@@ -92,34 +96,12 @@ def _norm_token(word: str) -> Tuple[str, float]:
 
 
 def text_similarity(t1: str, t2: str) -> float:
-    """
-    Word-level similarity of two snippets.
-    Detects restarts, identical prefixes, and rephrased takes.
-    """
-    c1, c2 = clean_text(t1), clean_text(t2)
-    if not c1 or not c2:
-        return 0.0
-
-    w1, w2 = c1.split(), c2.split()
-
-    # Prefix overlap check (speakers restarting the same sentence)
-    min_prefix = min(len(w1), len(w2), 4)
-    if min_prefix >= 3:
-        if w1[:min_prefix] == w2[:min_prefix]:
-            return 0.95
-        prefix_ratio = difflib.SequenceMatcher(None, " ".join(w1[:min_prefix]), " ".join(w2[:min_prefix])).ratio()
-        if prefix_ratio >= 0.8:
-            return 0.90
-
+    """Word-level similarity of two snippets (kept for callers outside this module)."""
     a = [n for n, _ in map(_norm_token, t1.split()) if n]
     b = [n for n, _ in map(_norm_token, t2.split()) if n]
-    seq_ratio = difflib.SequenceMatcher(None, a or w1, b or w2, autojunk=False).ratio()
-
-    # Jaccard similarity for slight rephrasings
-    s1, s2 = set(w1), set(w2)
-    jaccard = len(s1 & s2) / max(len(s1 | s2), 1)
-
-    return max(seq_ratio, jaccard)
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
 def score_take_quality(segment: Dict[str, Any]) -> float:
@@ -335,23 +317,53 @@ def _restart_match(
     return {"score": min(1.0, score), "last_b": last_b}
 
 
-def _check_aborted_match(
-    a: List[str], a_w: List[float], b: List[str]
+def _phrase_restart(
+    a: List[str], a_w: List[float], b: List[str], threshold: float, b_first_phrase_len: int
 ) -> Optional[Dict[str, Any]]:
-    """Check if b is an aborted restart matching the beginning of completed take a."""
-    if len(b) > 8:
+    """
+    Second chance for a restart that _restart_match rejects: the speaker drops
+    a sentence and says it again with a DIFFERENT lead-in, e.g.
+
+        "So, and along the way we have lost tomatoes and peppers, herbs and ..."
+        "In that process, we have lost tomatoes, peppers, and seedlings ..."
+
+    The openings differ, so the takes do not line up from the start, but a run
+    of consecutive words with real content ("we have lost tomatoes") appears
+    early in both. That is treated as a retake when the earlier take is short
+    (one sentence or so) and little of its content is missing from the retake.
+
+    The shared run must begin inside the retake's first phrase
+    (b_first_phrase_len words). If it begins after a later pause or sentence
+    end, that later point is the real restart and will be matched there.
+
+    The slider sets how long the shared run must be: 4 words up to 60%,
+    5 words up to 80%, and the rule is off above that.
+    """
+    if threshold > 0.8 or len(a) > PHRASE_MAX_TAKE_TOKENS:
         return None
+    min_run = 4 if threshold <= 0.6 else 5
+
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
-    pairs = [(m.a + k, m.b + k) for m in sm.get_matching_blocks() for k in range(m.size)]
-    if len(pairs) < 2:
+    blocks = [m for m in sm.get_matching_blocks() if m.size]
+    best = None
+    for m in blocks:
+        content = sum(1 for k in range(m.size) if a_w[m.a + k] >= _W_CONTENT)
+        if (m.size >= min_run and content >= 2
+                and m.a <= PHRASE_MAX_LEAD_TOKENS and m.b <= PHRASE_MAX_LEAD_TOKENS
+                and m.b < b_first_phrase_len
+                and (best is None or content > best[1])):
+            best = (m, content)
+    if not best:
         return None
-    first_a, first_b = pairs[0]
-    if first_a > 1 or first_b > 0:
+
+    b_set = set(b)
+    lost = sum(1 for i in range(len(a)) if a_w[i] >= _W_CONTENT and a[i] not in b_set)
+    if lost > PHRASE_MAX_LOST_CONTENT:
         return None
-    last_b = pairs[-1][1]
-    if len(pairs) < max(2, int(0.7 * len(b))):
-        return None
-    return {"score": len(pairs) / max(len(b), 1), "last_b": last_b}
+
+    matched_w = sum(a_w[m.a + k] for m in blocks for k in range(m.size))
+    total_w = sum(a_w) or 1.0
+    return {"score": min(1.0, matched_w / total_w), "last_b": blocks[-1].b + blocks[-1].size - 1}
 
 
 # ----------------------------------------------------------------------------
@@ -418,10 +430,6 @@ def detect_repeated_takes(
     split_words = set()                 # word indices where one take ends and the next begins
     take_score: Dict[int, float] = {}   # first word of a discarded take -> match score
     winner_end: Dict[int, int] = {}     # first word of a winning take -> last matched word
-    aborted_groups: List[Dict[str, Any]] = []
-
-    def span_text(a: int, b: int) -> str:
-        return " ".join(w["text"] for w in words[a:b])
 
     lo = 0
     for si in range(1, len(starts)):
@@ -431,6 +439,13 @@ def detect_repeated_takes(
         q_word = tok_word[q]
         while tok_time[starts[lo]] < q_time - max_gap_seconds:
             lo += 1
+
+        # Length of the first phrase after q (up to the next strong restart point)
+        first_phrase_len = nt - q
+        for nk in range(si + 1, len(starts)):
+            if start_info[starts[nk]][0] == 2:
+                first_phrase_len = starts[nk] - q
+                break
 
         front = q  # everything in [front, q) has already been discarded by this restart
         # Nearest earlier restart point first, then keep walking back: each
@@ -455,64 +470,37 @@ def detect_repeated_takes(
                 t += 1
             if len(head) < 2:
                 continue
-            b_win = tok[q:q + 24]
-            hm = difflib.SequenceMatcher(None, [tok[i] for i in head], b_win, autojunk=False)
+            hm = difflib.SequenceMatcher(None, [tok[i] for i in head], tok[q:q + 24], autojunk=False)
             hw = sum(tok_w[head[m.a + k]] for m in hm.get_matching_blocks() for k in range(m.size))
-            b_win_w = sum(tok_w[q + j] for j in range(min(len(tok) - q, 24)))
-            ref_w = min(sum(tok_w[i] for i in head), b_win_w)
-            if hw < 0.5 * similarity_threshold * ref_w:
+            head_ok = hw >= 0.5 * similarity_threshold * sum(tok_w[i] for i in head)
+            if not head_ok and soft:
                 continue
 
             a_idx = head if t >= front else head + [i for i in range(t, front) if kept_tok[i]]
             if len(a_idx) > MAX_TAKE_TOKENS:
                 continue
+            a_tok = [tok[i] for i in a_idx]
+            a_wts = [tok_w[i] for i in a_idx]
             b = tok[q:q + int(len(a_idx) * 1.5) + 8]
-            res = _restart_match([tok[i] for i in a_idx], [tok_w[i] for i in a_idx], b,
-                                 similarity_threshold, soft)
-            if res:
-                p_word = start_info[p][1]
-                for i in range(p, front):
-                    kept_tok[i] = False
-                for wi in range(p_word, q_word):
-                    kept_word[wi] = False
-                split_words.add(p_word)
-                split_words.add(q_word)
-                for sw in split_words:
-                    if p_word <= sw < q_word:
-                        take_score.setdefault(sw, res["score"])
-                end_w = tok_word[min(q + res["last_b"], nt - 1)]
-                winner_end[q_word] = max(winner_end.get(q_word, q_word), end_w)
-                front = p
+            res = _restart_match(a_tok, a_wts, b, similarity_threshold, soft) if head_ok else None
+            if not res and not soft:
+                res = _phrase_restart(a_tok, a_wts, b, similarity_threshold, first_phrase_len)
+            if not res:
                 continue
 
-            # Check if b is an aborted restart of completed take a
-            q_next_tok = starts[si + 1] if si + 1 < len(starts) else nt
-            b_frag = tok[q:q_next_tok]
-            ab_res = _check_aborted_match([tok[i] for i in a_idx], [tok_w[i] for i in a_idx], b_frag)
-            if ab_res:
-                p_word = start_info[p][1]
-                p_text = span_text(p_word, q_word)
-                q_next_word = start_info[starts[si + 1]][1] if si + 1 < len(starts) else len(words)
-                q_text = span_text(q_word, q_next_word)
-                p_q = score_take_quality({"text": p_text})
-                q_q = score_take_quality({"text": q_text})
-                if p_q >= 1.0 and q_q < 0.6 and (p_q - q_q > 0.5):
-                    for wi in range(q_word, q_next_word):
-                        kept_word[wi] = False
-                    for i in range(q, q_next_tok):
-                        kept_tok[i] = False
-                    aborted_groups.append({
-                        "p_word": p_word,
-                        "p_end_word": q_word,
-                        "p_text": p_text,
-                        "p_score": p_q,
-                        "q_word": q_word,
-                        "q_end_word": q_next_word,
-                        "q_text": q_text,
-                        "q_score": q_q,
-                        "sim": ab_res["score"]
-                    })
-                    break
+            p_word = start_info[p][1]
+            for i in range(p, front):
+                kept_tok[i] = False
+            for wi in range(p_word, q_word):
+                kept_word[wi] = False
+            split_words.add(p_word)
+            split_words.add(q_word)
+            for sw in split_words:
+                if p_word <= sw < q_word:
+                    take_score.setdefault(sw, res["score"])
+            end_w = tok_word[min(q + res["last_b"], nt - 1)]
+            winner_end[q_word] = max(winner_end.get(q_word, q_word), end_w)
+            front = p
 
     # ------------------------------------------------------------------
     # Turn discarded word runs into groups + cut intervals
@@ -520,14 +508,17 @@ def detect_repeated_takes(
     def cut_in(wi: int) -> float:
         """Cut time just before word wi, when wi is the first KEPT word."""
         if wi <= 0:
-            return words[0]["start"]
+            return max(0.0, words[0]["start"] - CUT_LEAD_SECONDS)
         return max(words[wi - 1]["end"], words[wi]["start"] - CUT_LEAD_SECONDS)
 
     def cut_out(wi: int) -> float:
         """Cut time just before word wi, when wi is the first DISCARDED word."""
         if wi <= 0:
-            return words[0]["start"]
+            return max(0.0, words[0]["start"] - CUT_LEAD_SECONDS)
         return min(words[wi]["start"], words[wi - 1]["end"] + CUT_TRAIL_SECONDS)
+
+    def span_text(a: int, b: int) -> str:
+        return " ".join(w["text"] for w in words[a:b])
 
     groups: List[Dict[str, Any]] = []
     discarded_intervals: List[Dict[str, Any]] = []
@@ -535,9 +526,6 @@ def detect_repeated_takes(
     wi = 0
     while wi < nw:
         if kept_word[wi]:
-            wi += 1
-            continue
-        if any(ag["q_word"] <= wi < ag["q_end_word"] for ag in aborted_groups):
             wi += 1
             continue
         rs = wi
@@ -597,44 +585,6 @@ def detect_repeated_takes(
                 "text": c["text"],
                 "group_id": gid,
             })
-
-    # Add aborted groups (where earlier complete take won over aborted take)
-    for ag in aborted_groups:
-        gid = f"retake_group_{len(groups) + 1}"
-        p_c = {
-            "index": 0,
-            "segment_index": words[ag["p_word"]]["seg"],
-            "start": round(words[ag["p_word"]]["start"], 3),
-            "end": round(words[ag["p_end_word"] - 1]["end"], 3),
-            "text": ag["p_text"],
-            "is_winner": True,
-            "quality_score": round(ag["p_score"], 2),
-            "similarity": 1.0,
-        }
-        q_c = {
-            "index": 1,
-            "segment_index": words[ag["q_word"]]["seg"],
-            "start": round(cut_out(ag["q_word"]), 3),
-            "end": round(words[ag["q_end_word"] - 1]["end"], 3),
-            "text": ag["q_text"],
-            "is_winner": False,
-            "quality_score": round(ag["q_score"], 2),
-            "similarity": round(ag["sim"], 2),
-        }
-        groups.append({
-            "group_id": gid,
-            "candidates": [p_c, q_c],
-            "winner_index": 0,
-            "winner_reason": "superior_quality",
-        })
-        discarded_intervals.append({
-            "start": q_c["start"],
-            "end": q_c["end"],
-            "duration": round(q_c["end"] - q_c["start"], 3),
-            "reason": "Discarded repeated take (won by superior_quality)",
-            "text": q_c["text"],
-            "group_id": gid,
-        })
 
     def _is_discarded(seg: Dict[str, Any]) -> bool:
         mid = (seg["start"] + seg["end"]) / 2.0
