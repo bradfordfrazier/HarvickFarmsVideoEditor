@@ -247,12 +247,17 @@ def _run_ffmpeg(cmd: List[str], job_id: str, total_duration: float,
                     pct = min(99.0, base_pct + (out_sec / total_duration) * span_pct)
                     JOBS[job_id]["progress"] = round(pct, 1)
             elif "=" not in line or " " in line:
-                # keep real log lines, skip the key=value progress chatter
                 recent.append(line)
-                if len(recent) > 30:
+                if len(recent) > 60:
                     recent.pop(0)
     proc.wait()
-    return proc.returncode, "\n".join(recent[-8:])
+    # Filter and prioritize meaningful error lines so root causes are not swallowed by thread shutdown logs
+    err_lines = [l for l in recent if any(k in l.lower() for k in ("error", "failed", "invalid", "cannot", "unable", "fatal", "unsupported"))]
+    if err_lines and len(err_lines) >= 3:
+        err_summary = "\n".join(err_lines[-15:])
+    else:
+        err_summary = "\n".join(recent[-25:])
+    return proc.returncode, err_summary
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +284,8 @@ def run_export_pipeline(
     audio_delay_ms: float = 0.0,
     fps: float = 60.0,
     output_filename: Optional[str] = None,
-    rough_cut: bool = False
+    rough_cut: bool = False,
+    use_nvenc: Optional[bool] = None
 ):
     """
     Execute complete export pipeline with progress tracking.
@@ -421,6 +427,10 @@ def run_export_pipeline(
             if cut_filter:
                 curr_v = apply_cut(curr_v)
 
+        # Guarantee final output stream is 8-bit YUV 4:2:0 with even dimensions for H.264 encoder compatibility
+        filter_parts.append(f"[{curr_v}]format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2[v_final]")
+        curr_v = "v_final"
+
         # ---- Audio filter graph ------------------------------------------
         curr_a = None
         if has_audio:
@@ -446,12 +456,9 @@ def run_export_pipeline(
             curr_a = "a_mastered"
 
         # ---- Command -------------------------------------------------------
-        if HAS_NVENC:
-            vcodec = ["-c:v", "h264_nvenc", "-preset", NVENC_PRESET, "-cq", "21"]
-        else:
-            vcodec = ["-c:v", "libx264", "-preset", "fast", "-crf", "21"]
+        can_use_nvenc = HAS_NVENC if use_nvenc is None else (use_nvenc and HAS_NVENC)
 
-        def build_cmd(hwaccel: Optional[str]) -> List[str]:
+        def build_cmd(hwaccel: Optional[str], nvenc: bool = can_use_nvenc) -> List[str]:
             in_opts: List[str] = []
             if hwaccel:
                 in_opts += ["-hwaccel", hwaccel]
@@ -459,6 +466,12 @@ def run_export_pipeline(
                 in_opts += ["-ss", f"{seek:.6f}"]
             if read_len is not None:
                 in_opts += ["-t", f"{read_len:.3f}"]
+
+            if nvenc:
+                vcodec = ["-c:v", "h264_nvenc", "-preset", NVENC_PRESET, "-cq", "21"]
+            else:
+                vcodec = ["-c:v", "libx264", "-preset", "fast", "-crf", "21"]
+
             cmd = [
                 FFMPEG_PATH, "-y",
                 *in_opts, "-i", source_file,
@@ -469,19 +482,27 @@ def run_export_pipeline(
             if curr_a:
                 # loudnorm works at 192 kHz internally; bring the output back to 48 kHz
                 cmd += ["-map", f"[{curr_a}]", "-c:a", "aac", "-b:a", "192k", "-ar", str(AUDIO_RATE)]
-            cmd += ["-fps_mode", "cfr", *vcodec, "-progress", "pipe:1", str(output_path)]
+            cmd += ["-fps_mode", "cfr", "-pix_fmt", "yuv420p", *vcodec, "-progress", "pipe:1", str(output_path)]
             return cmd
 
         JOBS[job_id]["step"] = "Rendering Video (FFmpeg)"
         JOBS[job_id]["progress"] = 35.0
 
         hw = HWACCEL if HWACCEL not in ("", "none", "off", "0") else None
-        code, err = _run_ffmpeg(build_cmd(hw), job_id, total_duration)
-        if code != 0 and hw:
-            # Some sources (e.g. 10-bit 4:2:2) cannot be decoded on the GPU.
+        code, err = _run_ffmpeg(build_cmd(hw, nvenc=can_use_nvenc), job_id, total_duration)
+
+        if code != 0 and hw and can_use_nvenc:
+            # Some sources cannot be decoded on the GPU; try CPU decode + GPU encode
             JOBS[job_id]["step"] = "Rendering Video (FFmpeg, CPU decode)"
             JOBS[job_id]["progress"] = 35.0
-            code, err = _run_ffmpeg(build_cmd(None), job_id, total_duration)
+            code, err = _run_ffmpeg(build_cmd(None, nvenc=True), job_id, total_duration)
+
+        if code != 0 and can_use_nvenc:
+            # Hardware encoder failed (e.g. error -22, driver issue, memory limit); fallback to CPU libx264
+            JOBS[job_id]["step"] = "Rendering Video (FFmpeg, Software fallback)"
+            JOBS[job_id]["progress"] = 35.0
+            code, err = _run_ffmpeg(build_cmd(None, nvenc=False), job_id, total_duration)
+
         if code != 0:
             raise RuntimeError(f"FFmpeg process failed with exit code {code}:\n{err}")
 

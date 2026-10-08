@@ -431,6 +431,17 @@
           </label>
         </div>
 
+        <div class="control-row" id="nvencRow">
+          <div class="control-label">
+            <span>Hardware Acceleration (NVENC)</span>
+            <span class="control-sublabel">Fast GPU encoding (auto falls back to CPU if needed)</span>
+          </div>
+          <label class="toggle-switch" title="Uses NVIDIA GPU for accelerated export. If unchecked or if GPU encoding is interrupted, software encoding (libx264) is used seamlessly.">
+            <input type="checkbox" id="nvencToggle" checked />
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+
         <button id="btnRender" class="btn-primary render-btn" disabled>
           ⚡ Render Video
         </button>

@@ -76,6 +76,7 @@ const btnScan = document.getElementById("btnScan");
 const btnRescan = document.getElementById("btnRescan");
 const btnRender = document.getElementById("btnRender");
 const roughCutToggle = document.getElementById("roughCutToggle");
+const nvencToggle = document.getElementById("nvencToggle");
 const renderInfo = document.getElementById("renderInfo");
 const filePathInput = document.getElementById("filePathInput");
 const fileInput = document.getElementById("fileInput");
@@ -133,12 +134,19 @@ async function checkSystemHealth() {
       hwBadge.style.color = "#81c784";
       hwDot.style.background = "#4caf50";
       hwDot.style.boxShadow = "0 0 10px #4caf50";
+      if (nvencToggle) nvencToggle.checked = true;
     } else {
       systemStatus.textContent = "FFmpeg CPU Encoding (libx264)";
       hwBadge.style.background = "rgba(251, 192, 45, 0.15)";
       hwBadge.style.color = "#fbc02d";
       hwDot.style.background = "#fbc02d";
       hwDot.style.boxShadow = "0 0 8px #fbc02d";
+      if (nvencToggle) {
+        nvencToggle.checked = false;
+        nvencToggle.disabled = true;
+        const row = document.getElementById("nvencRow");
+        if (row) row.style.opacity = "0.5";
+      }
     }
   } catch (err) {
     systemStatus.textContent = "Backend Offline";
@@ -772,7 +780,8 @@ async function startRender() {
     resync_drift: resyncDriftToggle ? resyncDriftToggle.checked : true,
     audio_delay_ms: audioDelaySlider ? parseFloat(audioDelaySlider.value) : 0.0,
     fps: (currentAnalysis && currentAnalysis.metadata && currentAnalysis.metadata.fps) ? currentAnalysis.metadata.fps : 60.0,
-    rough_cut: roughCutToggle ? roughCutToggle.checked : false
+    rough_cut: roughCutToggle ? roughCutToggle.checked : false,
+    use_nvenc: nvencToggle ? nvencToggle.checked : true
   };
 
   btnRender.disabled = true;

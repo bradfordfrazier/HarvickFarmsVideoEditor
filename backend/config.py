@@ -42,16 +42,21 @@ FFMPEG_PATH = str(bundled_ffmpeg) if bundled_ffmpeg.exists() else (shutil.which(
 FFPROBE_PATH = str(bundled_ffprobe) if bundled_ffprobe.exists() else (shutil.which("ffprobe") or "ffprobe")
 
 def detect_nvenc_support() -> bool:
-    """Check if NVIDIA NVENC hardware acceleration is available in FFmpeg."""
+    """Check if NVIDIA NVENC hardware acceleration is functional on this system."""
     try:
         result = subprocess.run(
-            [FFMPEG_PATH, "-encoders"],
+            [
+                FFMPEG_PATH, "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.04",
+                "-c:v", "h264_nvenc",
+                "-f", "null", "-"
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=5
+            timeout=4
         )
-        return "h264_nvenc" in result.stdout
+        return result.returncode == 0
     except Exception:
         return False
 
