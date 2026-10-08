@@ -1,21 +1,45 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+IS_FROZEN = getattr(sys, "frozen", False)
+
+if IS_FROZEN:
+    # When packaged with PyInstaller, internal files reside in _MEIPASS or executable directory
+    BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    
+    # Store dynamic writable data in AppData and user's Videos folder
+    APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "HarvickFarmsVideoEditor"
+    UPLOADS_DIR = APP_DATA_DIR / "uploads"
+    
+    videos_folder = Path.home() / "Videos"
+    OUTPUT_DIR = (videos_folder / "HarvickFarmsStudio") if videos_folder.exists() else (APP_DATA_DIR / "output")
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    UPLOADS_DIR = BASE_DIR / "uploads"
+    OUTPUT_DIR = BASE_DIR / "output"
+
 BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
 ASSETS_DIR = BASE_DIR / "assets"
 PRESETS_DIR = BASE_DIR / "presets"
-UPLOADS_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "output"
 
-for d in [UPLOADS_DIR, OUTPUT_DIR, ASSETS_DIR, PRESETS_DIR]:
+for d in [UPLOADS_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-FFMPEG_PATH = shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE_PATH = shutil.which("ffprobe") or "ffprobe"
+if not IS_FROZEN:
+    for d in [ASSETS_DIR, PRESETS_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
+
+# Locate FFmpeg & FFprobe (bundled bin/ directory has highest priority)
+BUNDLED_BIN_DIR = BASE_DIR / "bin"
+bundled_ffmpeg = BUNDLED_BIN_DIR / "ffmpeg.exe"
+bundled_ffprobe = BUNDLED_BIN_DIR / "ffprobe.exe"
+
+FFMPEG_PATH = str(bundled_ffmpeg) if bundled_ffmpeg.exists() else (shutil.which("ffmpeg") or "ffmpeg")
+FFPROBE_PATH = str(bundled_ffprobe) if bundled_ffprobe.exists() else (shutil.which("ffprobe") or "ffprobe")
 
 def detect_nvenc_support() -> bool:
     """Check if NVIDIA NVENC hardware acceleration is available in FFmpeg."""

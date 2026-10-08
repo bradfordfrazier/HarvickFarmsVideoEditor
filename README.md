@@ -86,6 +86,29 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 pytest tests/test_pipeline.py -v
 ```
 
+## 📦 Windows Packaging & Distribution
+
+To package the studio into a standalone Windows app and installer wizard that can be distributed to end users without needing Python or FFmpeg installed:
+
+### 1-Click Build
+
+Double-click `build_windows.bat` or run:
+
+```bash
+python scripts/build_package.py
+```
+
+### Outputs Generated
+
+1. **Windows Installer Wizard**:
+   - Location: `installer_output/HarvickFarmsVideoStudio_Setup_v1.0.0.exe` (169 MB)
+   - Standard Windows setup wizard with Desktop icon, Start Menu shortcut, and uninstaller.
+   - Fully standalone: embeds Python, FastAPI, UI assets, and static **FFmpeg & FFprobe** binaries.
+   
+2. **Portable Standalone App**:
+   - Location: `dist/HarvickFarmsVideoStudio/HarvickFarmsVideoStudio.exe`
+   - Can be zipped and copied directly to any Windows 10/11 computer to run without installation.
+
 ---
 
 ## 📄 License

@@ -146,9 +146,12 @@ def build_branding_filter(
         # Lower third banner
         # Text escaped for FFmpeg
         clean_text = lower_third_text.replace(":", "\\:").replace("'", "\\'")
+        font_param = ""
+        if os.name == "nt" and os.path.exists("C:/Windows/Fonts/arial.ttf"):
+            font_param = "fontfile=C\\\\:/Windows/Fonts/arial.ttf:"
         banner_filter = (
             f"[{current_v}]drawbox=y=ih-{px(180)}:color=black@0.65:width=iw:height={px(100)}:t=fill,"
-            f"drawtext=text='{clean_text}':fontcolor=white:fontsize={px(36)}:"
+            f"drawtext={font_param}text='{clean_text}':fontcolor=white:fontsize={px(36)}:"
             f"x=(w-text_w)/2:y=h-{px(145)}:box=0[{output_label}]"
         )
         filter_chains.append(banner_filter)

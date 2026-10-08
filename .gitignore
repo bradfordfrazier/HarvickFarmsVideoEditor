@@ -45,3 +45,10 @@ ENV/
 .vscode/
 .idea/
 *.log
+
+# Packaging & Build Artifacts
+build/
+dist/
+bin/
+installer_output/
+!assets/*.ico
